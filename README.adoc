@@ -1,3 +1,6 @@
+:toc:
+:toclevels: 5
+
 = proto-mcp-pam
 
 == What this project does
