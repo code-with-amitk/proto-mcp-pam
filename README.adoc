@@ -1,0 +1,205 @@
+= proto-mcp-pam
+
+== What this project does
+
+`proto-mcp-pam` is a single-binary, zero-dependency Privileged Access Management (PAM) reverse proxy for Model Context Protocol (MCP) servers written in Go.
+
+It sit between an AI agent or MCP client and an upstream MCP server and enforce the following rules at the protocol layer:
+
+* Intercept JSON-RPC 2.0 tool calls, especially `tools/call`
+* Apply a declarative policy before any call reaches the upstream server
+* Deny destructive or unauthorized operations immediately with a standard JSON-RPC error
+* Allow only the minimum required privilege for a specific call
+* Inject a short-lived credential or token only for that call and scrub it immediately after completion
+* Emit structured JSON audit logs for accountability and forensics
+
+AI-agent may call MCP servers with broad permissions and static secrets are a dangerous blast radius.
+
+== Core design
+
+The project follows a simple zero-standing-privilege model:
+
+1. An incoming `tools/call` message is inspected.
+2. Policy evaluation checks `params.name` and `params.arguments`.
+3. If the call is denied, the proxy returns a JSON-RPC error immediately.
+4. If allowed, the proxy injects a short-lived scoped credential or token into the upstream request path.
+5. The token is removed as soon as the request completes.
+6. An immutable audit record is emitted with timestamp, agent identity, tool name, hash of arguments, decision, and latency.
+
+== CyberArk vs proto-mcp-pam
+
+|===
+| Concern | CyberArk | proto-mcp-pam
+
+| Support for stdio
+| No. link:./Docs/CyberArk_vs_ProtoMcpPam/[CyberArk Identity Broker] is Cloud Based
+| link:./Docs/CyberArk_vs_ProtoMcpPam/[How MCP stdio works?], link:./Docs/CyberArk_vs_ProtoMcpPam/[Supports Yes]
+
+| Inspecting JSON-RPC `tools/call`
+| No. Once an agent has a valid OAuth token for a database MCP server, CyberArk does not inspect whether the SQL string inside is harmless `SELECT` or a destructive `DROP TABLE`.
+| Policy Engine (`policy.yaml`). Inspects every individual `tools/call` payload in real time
+
+| Latency
+| High. (10ms–100ms+). Cloud Identity Broker requires Secure Infrastructure Access (SIA) tenants, OIDC discovery, and JWKS validation.
+| Low. 
+
+| Runtime Footprint
+| High. (10ms–100ms+). 
+| Static Binary. (<18 MB RAM, <0.5 ms overhead). Runs locally on the same host/pod with zero external network dependencies during policy evaluation.
+|===
+
+== Why the protocol-layer model is necessary
+
+For AI use cases, the real security boundary is not just “who is logged in” but “what tool is being invoked and with which arguments”.
+
+A static API key or database password can be catastrophic because:
+
+* the agent has no per-tool least-privilege boundary
+* the credential remains usable beyond a single action
+* long-lived secrets often exist in multiple runtime locations
+* many autonomous agents bypass centralized human-session controls entirely
+
+`proto-mcp-pam` narrows the issue to a single tool call and enforces a policy decision before the upstream system sees the request.
+
+== Architecture overview
+
+[source,mermaid]
+----
+sequenceDiagram
+    participant Agent as AI Agent / MCP Client
+    participant PAM as proto-mcp-pam
+    participant Policy as Policy Engine
+    participant Token as TokenProvider
+    participant MCP as Upstream MCP Server
+
+    Agent->>PAM: tools/call { name, arguments }
+    PAM->>Policy: Evaluate method + arguments
+    alt Denied
+        Policy-->>PAM: DENY
+        PAM-->>Agent: JSON-RPC Error -32001: Access Denied by PAM Policy
+    else Allowed
+        Policy-->>PAM: ALLOW
+        PAM->>Token: Issue short-lived scoped credential
+        Token-->>PAM: ephemeral token
+        PAM->>MCP: Forward request + injected credential
+        MCP-->>PAM: Response
+        PAM->>PAM: Scrub token from memory
+        PAM-->>Agent: Response
+    end
+----
+
+== Policy model
+
+The project uses a declarative policy layer with example rules such as:
+
+* allow safe read-only queries with `SELECT`
+* deny destructive operations such as `DROP`, `DELETE`, or shell commands like `rm -rf`
+* deny requests against unauthorized AWS or database resources
+* reject tool names and arguments that exceed a defined execution boundary
+
+This pattern aligns with least-privilege and zero standing privilege, but at the MCP protocol layer rather than at the operating system or network layer.
+
+== Current benchmark intent
+
+This repository is designed around a clearly stated performance target for the MCP call path. The benchmark is not intended to compete with enterprise-scale PAM suites that include full session recording and legacy system integration; it is intended to prove that a low-overhead protocol broker can fit into high-frequency AI tool execution workflows.
+
+Tentative prototype targets:
+
+[cols="1,2,2,2,2", options="header"]
+|===
+| Metric | Direct baseline | proto-mcp-pam target | Legacy PAM / CyberArk-style fit | Notes
+
+| p50 latency
+| ~0.20 ms
+| ~0.40 ms
+| Not directly comparable; typically designed for human-admin sessions
+| Goal: under 0.5 ms overhead for proxied tool calls
+
+| p99 latency
+| ~0.75 ms
+| ~1.10 ms
+| Higher operational overhead due to session management and vault workflows
+| Goal: keep proxy overhead low enough for frequent machine-to-machine RPC
+
+| Peak RSS under 1,000 concurrent calls
+| ~8-12 MB
+| <18 MB
+| Enterprise PAM often operates at a much larger system footprint
+| Goal: keep the interceptor lightweight and single-binary
+
+| Binary size
+| N/A
+| ~10-20 MB depending on build flags
+| Enterprise suites are much larger and more complex
+| Goal: simple deployment and quick startup
+
+| Audit log granularity
+| No per-call tool decision log
+| Structured JSON per request
+| Enterprise logs exist, but are usually session-oriented
+| Goal: instrument every privileged MCP call
+|===
+
+This is a prototype target, not a vendor benchmark. The objective is to make the security model practical for AI agents running real tool call loops, while preserving low overhead.
+
+== Deployment model
+
+`proto-mcp-pam` is designed as a lightweight inline broker that can be deployed as:
+
+* a local gateway in front of a private MCP server
+* a per-agent security proxy in a developer environment or CI/CD automation
+* a front-end to a controlled internal MCP fleet
+* a policy enforcement boundary in an enterprise AI platform
+
+It stays intentionally small and dependency-free so it can be embedded into automation or deployed as a single process in constrained environments.
+
+== Security posture
+
+The core security principles are:
+
+* zero standing privilege
+* least privilege by tool and argument
+* no long-lived static agent secrets
+* per-call token injection
+* immediate token scrubbing after completion
+* explicit deny decisions before upstream execution
+* structured auditability
+
+This is specifically aligned to the failure mode of autonomous systems: broad access with narrow task execution.
+
+== Status
+
+This repository is a design-and-implementation prototype for a protocol-aware PAM layer. It is intended to demonstrate a solution for MCP security, especially in multi-tool and agentic environments where static credentials and broad trust boundaries are unsafe.
+
+== Recommended use
+
+Use `proto-mcp-pam` when:
+
+* you have MCP servers that execute privileged operations
+* you want to constrain AI agents by tool and argument, not just by network or VM access
+* you want every request to leave a clear audit trail
+* you want to avoid embedding persistent secrets in agent environments
+
+It is best viewed as a complementary control to existing enterprise security programs, not as a complete replacement for broader identity, network, and secrets controls.
+
+== Quick orientation
+
+To build and run the prototype locally:
+
+[source,bash]
+----
+go build ./cmd/mcp-pam
+./demo/run_demo.sh
+----
+
+The demo is intended to show:
+
+* an allowed read-only tool call succeeds with temporary credential injection
+* a destructive tool call is blocked immediately
+* audit logs are emitted in JSON and remain readable for live demonstrations
+
+== Summary
+
+`proto-mcp-pam` is the MCP-native equivalent of a policy-controlled credential broker: it treats tool calls as privileged actions, denies unsafe operations before execution, injects short-lived credentials only when permitted, and leaves a traceable, structured audit record.
+
+It is not a replacement for full enterprise PAM; it fills the gap that modern AI-agent toolchains create at the protocol layer: the gap between identity and machine-executed command intent.
