@@ -11,16 +11,13 @@ It sit between an AI agent or MCP client and an upstream MCP server and enforce 
 
 * Intercept JSON-RPC 2.0 tool calls, especially `tools/call`
 * Apply a declarative policy before any call reaches the upstream server
-* Deny destructive or unauthorized operations immediately with a standard JSON-RPC error
-* Allow only the minimum required privilege for a specific call
+* Deny destructive or unauthorized operations immediately (eg: DELETE table)
 * Inject a short-lived credential or token only for that call and scrub it immediately after completion
 * Emit structured JSON audit logs for accountability and forensics
 
 AI-agent may call MCP servers with broad permissions and static secrets are a dangerous blast radius.
 
-== Core design
-
-The project follows a simple zero-standing-privilege model:
+== Design
 
 1. An incoming `tools/call` message is inspected.
 2. Policy evaluation checks `params.name` and `params.arguments`.
@@ -29,40 +26,10 @@ The project follows a simple zero-standing-privilege model:
 5. The token is removed as soon as the request completes.
 6. An immutable audit record is emitted with timestamp, agent identity, tool name, hash of arguments, decision, and latency.
 
-== CyberArk vs proto-mcp-pam
 
-|===
-| Concern | CyberArk | proto-mcp-pam
+== link:./Docs/VaultOne_vs_ProtoMcpPam[VaultOne vs proto-mcp-pam]
 
-| Support for stdio
-| No. link:./Docs/CyberArk_vs_ProtoMcpPam/[CyberArk Identity Broker] is Cloud Based
-| link:./Docs/CyberArk_vs_ProtoMcpPam/[How MCP stdio works?], link:./Docs/CyberArk_vs_ProtoMcpPam/[Supports Yes]
-
-| Inspecting JSON-RPC `tools/call`
-| No. Once an agent has a valid OAuth token for a database MCP server, CyberArk does not inspect whether the SQL string inside is harmless `SELECT` or a destructive `DROP TABLE`.
-| Policy Engine (`policy.yaml`). Inspects every individual `tools/call` payload in real time
-
-| Latency
-| High. (10ms–100ms+). Cloud Identity Broker requires Secure Infrastructure Access (SIA) tenants, OIDC discovery, and JWKS validation.
-| Low. 
-
-| Runtime Footprint
-| High. (10ms–100ms+). 
-| Static Binary. (<18 MB RAM, <0.5 ms overhead). Runs locally on the same host/pod with zero external network dependencies during policy evaluation.
-|===
-
-== Why the protocol-layer model is necessary
-
-For AI use cases, the real security boundary is not just “who is logged in” but “what tool is being invoked and with which arguments”.
-
-A static API key or database password can be catastrophic because:
-
-* the agent has no per-tool least-privilege boundary
-* the credential remains usable beyond a single action
-* long-lived secrets often exist in multiple runtime locations
-* many autonomous agents bypass centralized human-session controls entirely
-
-`proto-mcp-pam` narrows the issue to a single tool call and enforces a policy decision before the upstream system sees the request.
+== link:./Docs/CyberArk_vs_ProtoMcpPam[CyberArk vs proto-mcp-pam]
 
 == Architecture overview
 
@@ -95,14 +62,14 @@ sequenceDiagram
 
 The project uses a declarative policy layer with example rules such as:
 
-* allow safe read-only queries with `SELECT`
-* deny destructive operations such as `DROP`, `DELETE`, or shell commands like `rm -rf`
-* deny requests against unauthorized AWS or database resources
-* reject tool names and arguments that exceed a defined execution boundary
+- Allow safe 
+** Read-only queries with `SELECT`
+- Deny
+** Destructive operations such as `DROP`, `DELETE`, or shell commands like `rm -rf`
+** Requests against unauthorized AWS or database resources
+** Reject tool names and arguments that exceed a defined execution boundary
 
-This pattern aligns with least-privilege and zero standing privilege, but at the MCP protocol layer rather than at the operating system or network layer.
-
-== Current benchmark intent
+== Metrics
 
 This repository is designed around a clearly stated performance target for the MCP call path. The benchmark is not intended to compete with enterprise-scale PAM suites that include full session recording and legacy system integration; it is intended to prove that a low-overhead protocol broker can fit into high-frequency AI tool execution workflows.
 
@@ -168,12 +135,6 @@ The core security principles are:
 * explicit deny decisions before upstream execution
 * structured auditability
 
-This is specifically aligned to the failure mode of autonomous systems: broad access with narrow task execution.
-
-== Status
-
-This repository is a design-and-implementation prototype for a protocol-aware PAM layer. It is intended to demonstrate a solution for MCP security, especially in multi-tool and agentic environments where static credentials and broad trust boundaries are unsafe.
-
 == Recommended use
 
 Use `proto-mcp-pam` when:
@@ -185,7 +146,7 @@ Use `proto-mcp-pam` when:
 
 It is best viewed as a complementary control to existing enterprise security programs, not as a complete replacement for broader identity, network, and secrets controls.
 
-== Quick orientation
+== Build & Run
 
 To build and run the prototype locally:
 

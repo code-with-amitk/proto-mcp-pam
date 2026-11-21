@@ -2,7 +2,26 @@
 :toclevels: 5
 
 
-= CyberArk vs proto-mcp-pam
+== CyberArk vs proto-mcp-pam
+|===
+| Concern | CyberArk | proto-mcp-pam
+
+| Support for stdio
+| No. link:./Docs/CyberArk_vs_ProtoMcpPam/[CyberArk Identity Broker] is Cloud Based
+| link:./Docs/CyberArk_vs_ProtoMcpPam/[How MCP stdio works?], link:./Docs/CyberArk_vs_ProtoMcpPam/[Supports Yes]
+
+| Inspecting JSON-RPC `tools/call`
+| No. Once an agent has a valid OAuth token for a database MCP server, CyberArk does not inspect whether the SQL string inside is harmless `SELECT` or a destructive `DROP TABLE`.
+| Policy Engine (`policy.yaml`). Inspects every individual `tools/call` payload in real time
+
+| Latency
+| High. (10ms–100ms+). Cloud Identity Broker requires Secure Infrastructure Access (SIA) tenants, OIDC discovery, and JWKS validation.
+| Low. 
+
+| Runtime Footprint
+| High. (10ms–100ms+). 
+| Static Binary. (<18 MB RAM, <0.5 ms overhead). Runs locally on the same host/pod with zero external network dependencies during policy evaluation.
+|===
 
 == AI Agent accessing Cloud MCP Server
 === CyberArk

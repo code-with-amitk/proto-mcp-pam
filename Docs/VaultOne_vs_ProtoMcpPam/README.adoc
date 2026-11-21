@@ -1,0 +1,47 @@
+:toc:
+:toclevels: 4
+
+== VaultOne vs proto-mcp-pam
+
+=== General
+
+|===
+| Architectural Dimension | VaultOne / JumpCloud PAM | proto-mcp-pam
+
+| Target Actor & Workload
+| Human IT Admins, Employees accessing servers, databases, and web apps
+| Autonomous AI Agents executing automated tool loops
+
+| Credential Lifecycle
+| (Minutes to Hours) user connects through a broker
+| (Milliseconds) Injects ephemeral tokens strictly for one JSON-RPC round-trip and wipes memory immediately.
+
+| Deployment & Footprint
+| Heavy. Control Plane, Data Plane
+| Single Static Go Binary
+
+| Auditing & Forensics
+| Video & Keystroke Recording: Records interactive RDP/SSH/browser sessions for human compliance audits
+| Structured JSON Telemetry: Emits deterministic, machine-parsable JSON-RPC decision logs
+|===
+
+=== MCP Specific Differences
+
+|===
+| | VaultOne / JumpCloud PAM | proto-mcp-pam
+
+| MCP Payload Inspection
+| No. Can control whether a user can connect to a PostgreSQL database and record their screen
+| Yes. Evaluates AI Agent's Json-RPC stream to allow `SELECT * FROM orders` while deterministically block `DROP TABLE orders` in under half a millisecond.
+
+| MCP Local stdio Governance
+| No Control. When developers run local MCP servers via Cursor, Claude Code, or local scripts, traffic flows over local OS pipes (stdin/stdout)—never touching a Jump Server or browser gateway
+| Yes. wraps local OS stdin/stdout subprocess pipes as well as network endpoints.
+
+| AI Agent Inspection (JIT)
+| VaultOne's JIT model relies on human-centric workflows (access requests, manager approvals, MFA prompts, and session timers). An autonomous AI agent making 50 tool calls per minute cannot wait for human approval gates
+| Automates policy evaluation and credential injection at machine speed (<0.5 ms)
+|===
+
+== Architecture
+- link:https://github.com/code-with-amitk/pvt-research/new/master/Projects/JumpCloud[User accessing linux host]
